@@ -23,7 +23,7 @@ echo "deleting stack ${STACK} (${REGION})... CloudFront 때문에 몇 분 걸립
 aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
 aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
 
-if aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null; then
+if aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null 2>&1; then
   aws s3 rm "s3://${BUCKET}" --recursive --region "$REGION" >/dev/null
   aws s3api delete-bucket --bucket "$BUCKET" --region "$REGION"
 fi

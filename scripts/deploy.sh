@@ -25,7 +25,7 @@ BUCKET="${PREFIX}-cfn-${ACCOUNT}-${REGION}"
 echo "account=${ACCOUNT} region=${REGION} stack=${STACK} auth=${AUTH}"
 
 # Lambda 코드를 올릴 배포용 버킷 (없으면 만든다)
-if ! aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null; then
+if ! aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null 2>&1; then
   if [ "$REGION" = "us-east-1" ]; then
     aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null
   else
