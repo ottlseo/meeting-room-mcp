@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회의실 현황</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗓️</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+  :root {
+    --ink: #16161d; --sub: #63647a; --line: #e5e4ec; --bg: #f5f5f8;
+    --free: #15803d; --free-bg: #ecfdf3; --free-line: #a7f3c4;
+    --busy: #dc2626; --busy-bg: #fef2f2; --busy-line: #fca5a5;
+    --violet: #6d3ae0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Pretendard Variable", Pretendard, -apple-system, sans-serif; color: var(--ink);
+         background: var(--bg); -webkit-font-smoothing: antialiased; }
+  header { display: flex; align-items: center; gap: 14px; padding: 16px 32px; background: #fff; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+  .clock { margin-left: auto; text-align: right; }
+  .clock b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
+  .clock span { font-size: 13px; color: var(--sub); display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--free); }
+  .dot.off { background: var(--busy); }
+  main { max-width: 1440px; margin: 0 auto; padding: 22px 32px 48px; }
+
+  /* 요약 */
+  .top { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; }
+  .count { background: #fff; border: 2px solid var(--line); border-radius: 18px; padding: 14px 22px; min-width: 180px; }
+  .count small { display: block; font-size: 15px; font-weight: 700; color: var(--sub); }
+  .count b { font-size: 40px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; }
+  .count.busy { border-color: var(--busy-line); background: var(--busy-bg); }
+  .count.busy b { color: var(--busy); }
+  .count.free { border-color: var(--free-line); background: var(--free-bg); }
+  .count.free b { color: var(--free); }
+  .count.day b { font-size: 28px; }
+  .daytabs { margin-left: auto; align-self: center; display: flex; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+  .daytabs button { border: 0; background: transparent; font: inherit; font-size: 16px; font-weight: 700; padding: 8px 20px; border-radius: 9px; color: var(--sub); cursor: pointer; }
+  .daytabs button.on { background: var(--ink); color: #fff; }
+
+  .banner { margin-top: 16px; display: none; align-items: center; gap: 14px; background: var(--violet); color: #fff;
+            border-radius: 14px; padding: 16px 22px; font-size: 18px; font-weight: 600; }
+  .banner.show { display: flex; animation: slide .4s ease-out; }
+  .banner small { margin-left: auto; font-weight: 500; opacity: .85; font-size: 14px; }
+  @keyframes slide { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* 지금 사용 중 표 */
+  .now { margin-top: 18px; background: #fff; border: 2px solid var(--busy-line); border-radius: 18px; overflow: hidden; }
+  .now h2 { margin: 0; padding: 12px 18px; font-size: 16px; background: var(--busy-bg); color: var(--busy); display: flex; gap: 8px; align-items: center; }
+  .now table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  .now th { text-align: left; font-size: 13px; color: var(--sub); font-weight: 600; padding: 8px 18px; border-bottom: 1px solid var(--line); }
+  .now td { padding: 11px 18px; border-bottom: 1px solid #f1f0f5; }
+  .now tr:last-child td { border-bottom: 0; }
+  .now td.who { font-weight: 800; font-size: 18px; }
+  .now td.left { color: var(--busy); font-weight: 700; white-space: nowrap; }
+  .now .empty { padding: 16px 18px; color: var(--sub); font-size: 15px; }
+
+  /* 카드 */
+  .floor { margin-top: 26px; }
+  .floor h2 { font-size: 16px; color: var(--sub); margin: 0 0 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px; }
+  .card { background: #fff; border: 2px solid var(--line); border-radius: 18px; overflow: hidden; transition: box-shadow .3s; }
+  .card.free { border-color: var(--free-line); }
+  .card.busy { border-color: var(--busy-line); }
+  .card.hot { box-shadow: 0 0 0 5px rgba(109,58,224,.35); }
+  .band { display: flex; align-items: center; gap: 8px; padding: 9px 16px; font-size: 16px; font-weight: 800; letter-spacing: -.01em; }
+  .band::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+  .card.free .band { background: var(--free-bg); color: var(--free); }
+  .card.busy .band { background: var(--busy); color: #fff; }
+  .card.day .band { background: #f1f0f6; color: var(--ink); }
+  .band small { margin-left: auto; font-size: 13px; font-weight: 700; opacity: .9; }
+  .body { padding: 14px 16px 16px; }
+  .name { font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
+  .info { font-size: 13px; color: var(--sub); margin-top: 2px; }
+  .who-box { margin-top: 12px; border-radius: 12px; padding: 10px 12px; }
+  .card.busy .who-box { background: var(--busy-bg); }
+  .card.free .who-box, .card.day .who-box { background: #f7f7fa; }
+  .who-box .k { font-size: 12px; font-weight: 700; color: var(--sub); }
+  .who-box .v { font-size: 19px; font-weight: 800; margin-top: 1px; }
+  .who-box .t { font-size: 14px; color: var(--ink); margin-top: 2px; }
+  .who-box .t span { color: var(--sub); }
+  .strip { position: relative; height: 12px; border-radius: 6px; background: var(--free-bg); margin-top: 14px; overflow: hidden; }
+  .strip .b { position: absolute; top: 0; bottom: 0; background: #f87171; }
+  .strip .b.past { background: #d4d4dc; }
+  .strip .nowm { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
+  .ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--sub); margin-top: 4px; }
+  .list { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .list div { display: grid; grid-template-columns: 96px 70px 1fr; gap: 8px; font-size: 14px; padding: 4px 6px; border-radius: 7px; }
+  .list time { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list span { color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list .past { opacity: .45; }
+  .list .cur { background: var(--busy-bg); color: var(--busy); }
+  .list .cur span { color: var(--busy); }
+  .noitem { font-size: 14px; color: var(--sub); margin-top: 10px; }
+
+  .bottom { display: grid; grid-template-columns: 1fr 320px; gap: 18px; margin-top: 30px; }
+  .box { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; }
+  .box h3 { margin: 0 0 10px; font-size: 16px; }
+  .log div { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid #f1f0f6; font-size: 15px; }
+  .log div:last-child { border-bottom: 0; }
+  .log time { color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .log .fail { color: var(--busy); }
+  .log small { color: #a3a3b5; margin-left: auto; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .sys { font-size: 14px; color: var(--sub); line-height: 1.9; }
+  .sys b { color: var(--ink); }
+  .ok { color: var(--free); font-weight: 700; }
+
+  @media (max-width: 900px) { .bottom { grid-template-columns: 1fr; } main, header { padding-left: 16px; padding-right: 16px; } .daytabs { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>회의실 현황</h1>
+  <div class="clock"><b id="clock">--:--</b><span><span class="dot" id="dot"></span><span id="live">연결 중</span></span></div>
+</header>
+
+<main>
+  <div class="top" id="top"></div>
+  <div class="banner" id="banner"></div>
+  <section class="now" id="now"></section>
+  <div id="floors"></div>
+
+  <div class="bottom">
+    <div class="box"><h3>최근 MCP 요청</h3><div class="log" id="log"></div></div>
+    <div class="box"><h3>연결 상태</h3><div class="sys" id="sys"></div></div>
+  </div>
+</main>
+
+<script>
+// 미리보기용 가짜 데이터: 실제 배포에서는 /api/rooms 가 이 자리를 채운다
+(() => {
+  const ROOMS = [
+    ["room-a","회의실 A (소)","3F",4,["화이트보드","모니터"]],
+    ["room-b","회의실 B (중)","3F",8,["화이트보드","모니터","화상회의"]],
+    ["room-c","회의실 C (소)","3F",4,["화이트보드","모니터"]],
+    ["room-d","회의실 D (중)","3F",10,["화이트보드","모니터","화상회의"]],
+    ["room-e","회의실 E (소)","3F",6,["화이트보드"]],
+    ["room-f","회의실 F (중)","3F",8,["모니터","화상회의"]],
+    ["room-g","포커스룸 G","3F",2,["모니터"]],
+    ["room-h","포커스룸 H","3F",1,["모니터","헤드셋"]],
+    ["room-i","대회의실 I","4F",30,["빔프로젝터","마이크","화상회의","스피커"]],
+    ["room-j","대회의실 J","4F",20,["빔프로젝터","마이크","화상회의"]],
+    ["room-k","임원회의실 K","5F",12,["모니터","화상회의","스피커폰"]],
+    ["room-l","임원회의실 L","5F",8,["모니터","화상회의"]],
+  ].map(([room_id,name,floor,capacity,equipment]) => ({room_id,name,floor,capacity,equipment}));
+  const kst = () => new Date(Date.now() + 9 * 3600 * 1000);
+  const at = (dayPlus, offMin) => { const d = kst(); d.setUTCDate(d.getUTCDate() + dayPlus); const m = d.getUTCHours()*60 + d.getUTCMinutes() + offMin;
+    const r = Math.round(m / 30) * 30; d.setUTCHours(0, 0, 0, 0); d.setUTCMinutes(r); return d.toISOString().slice(0, 16); };
+  const B = (room_id, day, s, e, booked_by, title) => ({ room_id, start_time: at(day, s), end_time: at(day, e), booked_by, title });
+  const today = [
+    B("room-a",0,-240,-180,"최유나","디자인 리뷰"), B("room-b",0,-30,30,"김지민","주간 회의"), B("room-b",0,90,150,"오세훈","고객사 콜"),
+    B("room-i",0,-15,45,"이서연","분기 실적 리뷰"), B("room-k",0,-60,30,"박준호","임원 보고"), B("room-c",0,60,120,"정민수","신규 광고주 미팅"),
+    B("room-f",0,30,90,"한다은","스프린트 계획"), B("room-j",0,120,240,"윤가영","사내 교육"), B("room-d",0,-120,-90,"서지훈","1:1 면담"),
+  ];
+  const tomorrow = [ B("room-b",1,0,60,"김지민","주간 회의"), B("room-c",1,-60,60,"정민수","광고 성과 보고"), B("room-l",1,120,180,"한다은","팀 점심 회의") ];
+  const t0 = Date.now();
+  const act = (secAgo, tool, args, ok, summary) => ({ id: `${t0 - secAgo*1000}#x`, time: new Date(t0 - secAgo*1000 + 9*3600*1000).toISOString().slice(11,19), tool, args, ok, summary });
+  const activity = [
+    act(20, "book_room", {room_id:"room-i", date: at(0,0).slice(0,10), start_hour: Number(at(0,-15).slice(11,13)), duration_minutes:60, booked_by:"이서연", title:"분기 실적 리뷰"}, true, ""),
+    act(25, "check_availability", {room_id:"room-i", date: at(0,0).slice(0,10)}, true, ""),
+    act(30, "list_rooms", {}, true, ""),
+    act(300, "book_room", {room_id:"room-b", date: at(0,0).slice(0,10), start_hour: 9, duration_minutes:60, booked_by:"김지민", title:"주간 회의"}, false, "예약 실패: 시간 충돌: 주간 회의"),
+    act(900, "my_schedule", {name:"박준호", date: at(0,0).slice(0,10)}, true, ""),
+  ];
+  window.fetch = async (url) => {
+    const date = new URL(url, location.href).searchParams.get("date");
+    const isToday = date === at(0,0).slice(0,10);
+    const body = { now: kst().toISOString(), date, tz_offset_hours: 9, gateway: { name: "meeting-room-mcp", status: "READY" },
+      rooms: ROOMS, bookings: (isToday ? today : tomorrow).filter(b => b.start_time.startsWith(date)).sort((a,b) => a.start_time.localeCompare(b.start_time)), activity };
+    return { ok: true, json: async () => body };
+  };
+})();
+</script>
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const START = 8, END = 20;
+  let tzOffset = 9, dayOffset = 0, first = true, seen = new Set(), hotRooms = new Map(), roomNames = {};
+
+  const local = () => new Date(Date.now() + tzOffset * 3600 * 1000);
+  const ymd = d => d.toISOString().slice(0, 10);
+  const hm = t => t.slice(11, 16);
+  const mins = t => { const [h, m] = hm(t).split(':').map(Number); return h * 60 + m; };
+  const pct = m => Math.max(0, Math.min(100, (m - START * 60) / ((END - START) * 60) * 100));
+  const left = m => m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 남음` : `${m}분 남음`;
+
+  function describe(ev) {
+    const a = ev.args || {}, room = roomNames[a.room_id] || a.room_id;
+    switch (ev.tool) {
+      case 'book_room': return ev.ok ? `${room} ${String(a.start_hour).padStart(2, '0')}:00 예약 · ${a.booked_by}` : `${room} 예약 실패: ${String(ev.summary || '').replace('예약 실패: ', '')}`;
+      case 'cancel_booking': return `${room} ${hm(a.start_time || '')} 예약 취소`;
+      case 'check_availability': return `${room} ${a.date} 예약 현황 확인`;
+      case 'list_rooms': return '회의실 목록 확인';
+      case 'my_schedule': return `${a.name}님 ${a.date} 일정 확인`;
+      default: return ev.summary;
+    }
+  }
+
+  function render(d) {
+    tzOffset = d.tz_offset_hours ?? tzOffset;
+    const isToday = dayOffset === 0, rooms = d.rooms, bookings = d.bookings;
+    const nowMin = local().getUTCHours() * 60 + local().getUTCMinutes();
+    rooms.forEach(r => roomNames[r.room_id] = r.name);
+
+    // 새 요청: 배너 + 카드 강조
+    const fresh = d.activity.filter(a => !seen.has(a.id));
+    d.activity.forEach(a => seen.add(a.id));
+    if (!first) {
+      fresh.forEach(a => { if (a.args?.room_id) hotRooms.set(a.args.room_id, Date.now()); });
+      const ev = fresh.find(a => a.tool === 'book_room' || a.tool === 'cancel_booking');
+      if (ev) {
+        const b = $('banner');
+        b.innerHTML = `${ev.ok ? '✅' : '⚠️'} 방금 MCP로: ${esc(describe(ev))}<small>${esc(ev.time)}</small>`;
+        b.classList.add('show'); clearTimeout(b._t); b._t = setTimeout(() => b.classList.remove('show'), 10000);
+      }
+    }
+    for (const [k, t] of hotRooms) if (Date.now() - t > 8000) hotRooms.delete(k);
+
+    const state = r => {
+      const bs = bookings.filter(b => b.room_id === r.room_id);
+      const cur = isToday ? bs.find(b => mins(b.start_time) <= nowMin && nowMin < mins(b.end_time)) : null;
+      const next = isToday ? bs.find(b => mins(b.start_time) > nowMin) : bs[0];
+      return { bs, cur, next };
+    };
+    const all = rooms.map(r => ({ r, ...state(r) }));
+    const busy = all.filter(x => x.cur);
+
+    // 요약
+    $('top').innerHTML = (isToday
+      ? `<div class="count busy"><small>지금 사용 중</small><b>${busy.length}곳</b></div>
+         <div class="count free"><small>지금 비어 있음</small><b>${rooms.length - busy.length}곳</b></div>`
+      : `<div class="count day"><small>${esc(d.date)}</small><b>예약 ${bookings.length}건</b></div>`) +
+      `<div class="daytabs"><button class="${isToday ? 'on' : ''}" data-d="0">오늘</button><button class="${isToday ? '' : 'on'}" data-d="1">내일</button></div>`;
+    document.querySelectorAll('.daytabs button').forEach(b => b.onclick = () => { dayOffset = Number(b.dataset.d); poll(); });
+
+    // 지금 사용 중 표
+    $('now').style.display = isToday ? '' : 'none';
+    $('now').innerHTML = `<h2>● 지금 사용 중인 회의실</h2>` + (busy.length
+      ? `<table><tr><th>회의실</th><th>예약자</th><th>회의</th><th>시간</th><th></th></tr>${busy.map(x =>
+          `<tr><td><b>${esc(x.r.name)}</b> <span style="color:var(--sub);font-size:13px">${esc(x.r.floor)}</span></td>
+           <td class="who">${esc(x.cur.booked_by)}</td><td>${esc(x.cur.title)}</td>
+           <td>${hm(x.cur.start_time)} ~ ${hm(x.cur.end_time)}</td><td class="left">${left(mins(x.cur.end_time) - nowMin)}</td></tr>`).join('')}</table>`
+      : `<div class="empty">지금 사용 중인 회의실이 없습니다</div>`);
+
+    // 층별 카드
+    const byFloor = {};
+    all.forEach(x => (byFloor[x.r.floor] ||= []).push(x));
+    $('floors').innerHTML = Object.keys(byFloor).sort().map(floor => `<section class="floor"><h2>${floor.replace('F', '층')}</h2><div class="cards">${
+      byFloor[floor].map(({ r, bs, cur, next }) => {
+        const cls = !isToday ? 'day' : cur ? 'busy' : 'free';
+        const band = !isToday ? `예약 ${bs.length}건` : cur ? '사용 중' : '비어 있음';
+        const bandRight = isToday && cur ? `${hm(cur.end_time)}까지` : '';
+        let who;
+        if (cur) who = `<div class="k">예약자</div><div class="v">${esc(cur.booked_by)}</div><div class="t">${esc(cur.title)} <span>· ${hm(cur.start_time)} ~ ${hm(cur.end_time)} · ${left(mins(cur.end_time) - nowMin)}</span></div>`;
+        else if (next) who = `<div class="k">${isToday ? '다음 예약' : '첫 예약'}</div><div class="v">${hm(next.start_time)} · ${esc(next.booked_by)}</div><div class="t">${esc(next.title)}</div>`;
+        else who = `<div class="k">예약</div><div class="v" style="color:var(--free)">${isToday ? '오늘 남은 예약 없음' : '하루 종일 비어 있음'}</div>`;
+        const blocks = bs.map(b => `<div class="b ${isToday && mins(b.end_time) <= nowMin ? 'past' : ''}" style="left:${pct(mins(b.start_time))}%;width:${Math.max(1, pct(mins(b.end_time)) - pct(mins(b.start_time)))}%"></div>`).join('');
+        const nowMark = isToday && nowMin >= START * 60 && nowMin <= END * 60 ? `<div class="nowm" style="left:${pct(nowMin)}%"></div>` : '';
+        const list = bs.length ? `<div class="list">${bs.map(b => {
+          const st = !isToday ? '' : b === cur ? 'cur' : mins(b.end_time) <= nowMin ? 'past' : '';
+          return `<div class="${st}"><time>${hm(b.start_time)}~${hm(b.end_time)}</time><b>${esc(b.booked_by)}</b><span>${esc(b.title)}</span></div>`;
+        }).join('')}</div>` : '';
+        return `<div class="card ${cls} ${hotRooms.has(r.room_id) ? 'hot' : ''}">
+          <div class="band">${band}<small>${bandRight}</small></div>
+          <div class="body">
+            <div class="name">${esc(r.name)}</div>
+            <div class="info">${r.capacity}명 · ${esc((r.equipment || []).join(' · '))}</div>
+            <div class="who-box">${who}</div>
+            <div class="strip">${blocks}${nowMark}</div>
+            <div class="ticks"><span>8시</span><span>12시</span><span>16시</span><span>20시</span></div>
+            ${list}
+          </div></div>`;
+      }).join('')}</div></section>`).join('');
+
+    $('log').innerHTML = d.activity.length ? d.activity.slice(0, 10).map(a =>
+      `<div><time>${esc(a.time)}</time><span class="${a.ok ? '' : 'fail'}">${esc(describe(a))}</span><small>${esc(a.tool)}</small></div>`).join('')
+      : '<p style="color:var(--sub);margin:0">아직 요청이 없습니다</p>';
+    const g = d.gateway || {};
+    $('sys').innerHTML = `<b>MCP 서버</b> ${esc(g.name || '')} ${g.status === 'READY' ? '<span class="ok">READY</span>' : esc(g.status || '')}<br>
+      <b>구성</b> AgentCore Gateway → Lambda → DynamoDB`;
+  }
+
+  let busy = false;
+  async function poll() {
+    if (busy) return; busy = true;
+    try {
+      const date = new Date(local().getTime() + dayOffset * 86400000);
+      const r = await fetch(`api/rooms?date=${ymd(date)}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      render(await r.json());
+      first = false;
+      $('dot').classList.remove('off'); $('live').textContent = '실시간';
+    } catch (e) {
+      $('dot').classList.add('off'); $('live').textContent = '연결 끊김, 다시 시도 중';
+    } finally { busy = false; }
+  }
+  setInterval(() => { $('clock').textContent = local().toISOString().slice(11, 16); }, 1000);
+  $('clock').textContent = local().toISOString().slice(11, 16);
+  poll(); setInterval(poll, 2000);
+</script>
+</body>
+</html>

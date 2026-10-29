@@ -1,0 +1,403 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Meeting room booking MCP server for Amazon Quick Desktop (and any MCP client).
+  AgentCore Gateway + Lambda + DynamoDB, with a live room status page on CloudFront.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: meeting-room
+    AllowedPattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+    MaxLength: 30
+    Description: Name prefix for every resource (lowercase letters, numbers, single hyphens).
+  AuthMode:
+    Type: String
+    Default: COGNITO
+    AllowedValues: [COGNITO, NONE]
+    Description: >
+      COGNITO = clients send a Cognito access token (24h, refresh with scripts/mcp-json.sh).
+      NONE = no token; anyone with the URL can call the tools. Use only for short workshops.
+
+Conditions:
+  UseCognito: !Equals [!Ref AuthMode, COGNITO]
+  NoAuth: !Equals [!Ref AuthMode, NONE]
+
+Resources:
+  # ── Data ────────────────────────────────────────────────────────────
+  RoomsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-rooms"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: room_id, AttributeType: S}]
+      KeySchema: [{AttributeName: room_id, KeyType: HASH}]
+
+  BookingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-bookings"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: room_id, AttributeType: S}
+        - {AttributeName: start_time, AttributeType: S}
+      KeySchema:
+        - {AttributeName: room_id, KeyType: HASH}
+        - {AttributeName: start_time, KeyType: RANGE}
+
+  ActivityTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-activity"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      TimeToLiveSpecification: {AttributeName: ttl, Enabled: true}
+
+  # 12 sample rooms, inserted once at stack creation
+  SeedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: seed
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement: [{Effect: Allow, Action: [dynamodb:BatchWriteItem, dynamodb:PutItem], Resource: !GetAtt RoomsTable.Arn}]
+
+  SeedFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-seed"
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt SeedRole.Arn
+      Environment: {Variables: {ROOMS_TABLE: !Ref RoomsTable}}
+      Code:
+        ZipFile: |
+          import json, os, urllib.request, boto3
+          ROOMS = [
+            ("room-a", "회의실 A (소)", "3F", 4, ["화이트보드", "모니터"]),
+            ("room-b", "회의실 B (중)", "3F", 8, ["화이트보드", "모니터", "화상회의"]),
+            ("room-c", "회의실 C (소)", "3F", 4, ["화이트보드", "모니터"]),
+            ("room-d", "회의실 D (중)", "3F", 10, ["화이트보드", "모니터", "화상회의"]),
+            ("room-e", "회의실 E (소)", "3F", 6, ["화이트보드"]),
+            ("room-f", "회의실 F (중)", "3F", 8, ["모니터", "화상회의"]),
+            ("room-g", "포커스룸 G", "3F", 2, ["모니터"]),
+            ("room-h", "포커스룸 H", "3F", 1, ["모니터", "헤드셋"]),
+            ("room-i", "대회의실 I", "4F", 30, ["빔프로젝터", "마이크", "화상회의", "스피커"]),
+            ("room-j", "대회의실 J", "4F", 20, ["빔프로젝터", "마이크", "화상회의"]),
+            ("room-k", "임원회의실 K", "5F", 12, ["모니터", "화상회의", "스피커폰"]),
+            ("room-l", "임원회의실 L", "5F", 8, ["모니터", "화상회의"]),
+          ]
+          def send(event, context, status, reason=""):
+              # python3.13 런타임에는 cfnresponse 모듈이 없어서 직접 응답한다
+              body = json.dumps({"Status": status, "Reason": reason or context.log_stream_name,
+                                 "PhysicalResourceId": event.get("PhysicalResourceId") or "seed-rooms",
+                                 "StackId": event["StackId"], "RequestId": event["RequestId"],
+                                 "LogicalResourceId": event["LogicalResourceId"], "Data": {}}).encode()
+              req = urllib.request.Request(event["ResponseURL"], data=body, method="PUT", headers={"Content-Type": ""})
+              urllib.request.urlopen(req, timeout=30)
+          def handler(event, context):
+              try:
+                  if event["RequestType"] == "Create":
+                      t = boto3.resource("dynamodb").Table(os.environ["ROOMS_TABLE"])
+                      with t.batch_writer() as w:
+                          for rid, name, floor, cap, eq in ROOMS:
+                              w.put_item(Item={"room_id": rid, "name": name, "floor": floor, "capacity": cap, "equipment": eq})
+                  send(event, context, "SUCCESS")
+              except Exception as e:
+                  print(e)
+                  send(event, context, "FAILED", str(e))
+
+  SeedRooms:
+    Type: Custom::SeedRooms
+    Properties:
+      ServiceToken: !GetAtt SeedFunction.Arn
+      ServiceTimeout: 300
+      Table: !Ref RoomsTable
+
+  # ── MCP tools (Lambda) ──────────────────────────────────────────────
+  ToolsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: tables
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:Scan, dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem]
+                Resource: [!GetAtt RoomsTable.Arn, !GetAtt BookingsTable.Arn]
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt ActivityTable.Arn
+
+  ToolsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-tools"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: handler.lambda_handler
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt ToolsRole.Arn
+      Code: src/tools
+      Environment:
+        Variables:
+          ROOMS_TABLE: !Ref RoomsTable
+          BOOKINGS_TABLE: !Ref BookingsTable
+          ACTIVITY_TABLE: !Ref ActivityTable
+
+  # ── AgentCore Gateway (MCP endpoint) ────────────────────────────────
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: bedrock-agentcore.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}}
+      Policies:
+        - PolicyName: invoke-tools
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement: [{Effect: Allow, Action: lambda:InvokeFunction, Resource: !GetAtt ToolsFunction.Arn}]
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Condition: UseCognito
+    Properties:
+      UserPoolName: !Sub "${Prefix}-mcp-pool"
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Condition: UseCognito
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub "${Prefix}-mcp-${AWS::AccountId}"
+
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Condition: UseCognito
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Sub "${Prefix}-mcp"
+      Name: !Sub "${Prefix}-mcp"
+      Scopes: [{ScopeName: invoke, ScopeDescription: Call the meeting room MCP tools}]
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Condition: UseCognito
+    DependsOn: ResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub "${Prefix}-mcp-client"
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [client_credentials]
+      AllowedOAuthScopes: [!Sub "${Prefix}-mcp/invoke"]
+      AccessTokenValidity: 24
+      TokenValidityUnits: {AccessToken: hours}
+
+  Gateway:
+    Type: AWS::BedrockAgentCore::Gateway
+    Properties:
+      Name: !Sub "${Prefix}-mcp"
+      Description: Meeting room booking tools (list, availability, book, cancel, my schedule)
+      RoleArn: !GetAtt GatewayRole.Arn
+      ProtocolType: MCP
+      AuthorizerType: !If [UseCognito, CUSTOM_JWT, NONE]
+      AuthorizerConfiguration: !If
+        - UseCognito
+        - CustomJWTAuthorizer:
+            DiscoveryUrl: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration"
+            AllowedClients: [!Ref UserPoolClient]
+        - !Ref AWS::NoValue
+      ExceptionLevel: DEBUG
+
+  GatewayTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !GetAtt Gateway.GatewayIdentifier
+      Name: rooms
+      CredentialProviderConfigurations: [{CredentialProviderType: GATEWAY_IAM_ROLE}]
+      TargetConfiguration:
+        Mcp:
+          Lambda:
+            LambdaArn: !GetAtt ToolsFunction.Arn
+            ToolSchema:
+              InlinePayload:
+                - Name: list_rooms
+                  Description: 사용 가능한 회의실 목록을 반환한다. 각 회의실의 ID, 이름, 층, 수용인원, 장비 정보를 포함한다. 예약 전에 회의실 ID를 확인할 때 먼저 호출한다.
+                  InputSchema: {Type: object, Properties: {}}
+                - Name: check_availability
+                  Description: 특정 회의실의 특정 날짜 예약 현황을 조회한다.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      room_id: {Type: string, Description: "회의실 ID (예: room-a)"}
+                      date: {Type: string, Description: "조회할 날짜 (YYYY-MM-DD)"}
+                    Required: [room_id, date]
+                - Name: book_room
+                  Description: 회의실을 예약한다. 같은 시간대에 예약이 있으면 실패와 충돌 내용을 돌려준다.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      room_id: {Type: string, Description: "회의실 ID (예: room-a)"}
+                      date: {Type: string, Description: "예약 날짜 (YYYY-MM-DD)"}
+                      start_hour: {Type: integer, Description: "시작 시각 0-23 (예: 15 = 오후 3시)"}
+                      duration_minutes: {Type: integer, Description: "회의 시간(분, 예: 60)"}
+                      booked_by: {Type: string, Description: 예약자 이름}
+                      title: {Type: string, Description: 회의 제목}
+                    Required: [room_id, date, start_hour, duration_minutes, booked_by, title]
+                - Name: cancel_booking
+                  Description: 예약을 취소한다.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      room_id: {Type: string, Description: 회의실 ID}
+                      start_time: {Type: string, Description: "예약 시작 시각 (YYYY-MM-DDTHH:MM)"}
+                    Required: [room_id, start_time]
+                - Name: my_schedule
+                  Description: 특정 사람의 특정 날짜 예약 목록을 조회한다.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      name: {Type: string, Description: 예약자 이름}
+                      date: {Type: string, Description: "조회할 날짜 (YYYY-MM-DD)"}
+                    Required: [name, date]
+
+  # ── Live room status page (CloudFront → Lambda URL) ─────────────────
+  DashboardRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:Scan
+                Resource: !GetAtt RoomsTable.Arn
+              - Effect: Allow
+                Action: dynamodb:Query
+                Resource: [!GetAtt BookingsTable.Arn, !GetAtt ActivityTable.Arn]
+              - Effect: Allow
+                Action: bedrock-agentcore:GetGateway
+                Resource: !GetAtt Gateway.GatewayArn
+
+  DashboardFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-dashboard"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: handler.lambda_handler
+      Timeout: 15
+      MemorySize: 256
+      Role: !GetAtt DashboardRole.Arn
+      Code: src/dashboard
+      Environment:
+        Variables:
+          ROOMS_TABLE: !Ref RoomsTable
+          BOOKINGS_TABLE: !Ref BookingsTable
+          ACTIVITY_TABLE: !Ref ActivityTable
+          GATEWAY_ID: !GetAtt Gateway.GatewayIdentifier
+          TIMEZONE_OFFSET_HOURS: "9"
+
+  DashboardUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt DashboardFunction.Arn
+      AuthType: AWS_IAM
+
+  DashboardOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${Prefix}-dashboard-oac"
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${Prefix} meeting room status"
+        Enabled: true
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: dashboard
+            DomainName: !Select [2, !Split ["/", !GetAtt DashboardUrl.FunctionUrl]]
+            OriginAccessControlId: !GetAtt DashboardOac.Id
+            CustomOriginConfig: {OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2]}
+        DefaultCacheBehavior:
+          TargetOriginId: dashboard
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+          Compress: true
+
+  DashboardUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      FunctionUrlAuthType: AWS_IAM
+      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  DashboardInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardFunction
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+Outputs:
+  GatewayUrl:
+    Description: MCP endpoint (streamable HTTP)
+    Value: !GetAtt Gateway.GatewayUrl
+  RoomsPageUrl:
+    Description: Live room status page
+    Value: !Sub "https://${Distribution.DomainName}/"
+  AuthMode:
+    Value: !Ref AuthMode
+  McpJson:
+    Condition: NoAuth
+    Description: Copy this into Quick Desktop (Remote › Paste JSON) or any MCP client
+    Value: !Sub '{"mcpServers":{"${Prefix}":{"type":"http","url":"${Gateway.GatewayUrl}"}}}'
+  UserPoolId:
+    Condition: UseCognito
+    Value: !Ref UserPool
+  ClientId:
+    Condition: UseCognito
+    Value: !Ref UserPoolClient
+  TokenUrl:
+    Condition: UseCognito
+    Value: !Sub "https://${Prefix}-mcp-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+  Scope:
+    Condition: UseCognito
+    Value: !Sub "${Prefix}-mcp/invoke"
