@@ -2,7 +2,7 @@
 
 Amazon Quick Desktop 실습용 **회의실 예약 MCP 서버**입니다. CloudFormation 한 번으로 배포되고, 배포가 끝나면 `mcp.json`이 나옵니다. 이 JSON을 Quick Desktop이나 다른 MCP 클라이언트에 붙여넣기만 하면 채팅으로 회의실을 조회하고 예약할 수 있습니다.
 
-## 배포하면 생기는 것
+## 최종 결과물
 
 1. **회의실 예약 MCP 서버** (AgentCore Gateway): Quick Desktop 같은 MCP 클라이언트가 채팅으로 회의실을 조회·예약·취소하는 엔드포인트입니다. 배포가 끝나면 이 서버에 바로 연결할 수 있는 `mcp.json`이 나옵니다.
 2. **MCP와 연결된 회의실 현황 페이지** (CloudFront): MCP 서버와 같은 데이터를 봅니다. 채팅으로 예약하면 2초 안에 반영되어, 어느 회의실이 지금 사용 중인지, 누가 예약했는지가 바로 보입니다.
