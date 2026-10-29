@@ -2,11 +2,14 @@
 
 Amazon Quick Desktop 실습용 **회의실 예약 MCP 서버**입니다. CloudFormation 한 번으로 배포되고, 배포가 끝나면 `mcp.json`이 나옵니다. 이 JSON을 Quick Desktop이나 다른 MCP 클라이언트에 붙여넣기만 하면 채팅으로 회의실을 조회하고 예약할 수 있습니다.
 
-## 결과물: 회의실 현황 페이지
+## 배포하면 생기는 것
 
-채팅으로 예약하면 함께 배포되는 회의실 현황 페이지에 2초 안에 반영됩니다. 어느 회의실이 지금 사용 중인지, 누가 예약했는지가 바로 보입니다.
+1. **회의실 예약 MCP 서버** (AgentCore Gateway): Quick Desktop 같은 MCP 클라이언트가 채팅으로 회의실을 조회·예약·취소하는 엔드포인트입니다. 배포가 끝나면 이 서버에 바로 연결할 수 있는 `mcp.json`이 나옵니다.
+2. **MCP와 연결된 회의실 현황 페이지** (CloudFront): MCP 서버와 같은 데이터를 봅니다. 채팅으로 예약하면 2초 안에 반영되어, 어느 회의실이 지금 사용 중인지, 누가 예약했는지가 바로 보입니다.
 
 ![회의실 현황 페이지](docs/rooms-page.jpg)
+
+현황 페이지에 보이는 것
 
 - 위쪽에 **지금 사용 중 / 비어 있음** 회의실 수
 - **지금 사용 중인 회의실** 표: 회의실, 예약자, 회의 제목, 시간, 남은 시간
@@ -14,7 +17,7 @@ Amazon Quick Desktop 실습용 **회의실 예약 MCP 서버**입니다. CloudFo
 - MCP로 예약·취소가 들어오면 위쪽 알림과 카드 강조
 - 오늘 / 내일 전환, 최근 MCP 요청 기록
 
-페이지 주소는 배포가 끝날 때 `room status page`로 출력됩니다. 배포 전에 디자인만 보려면 `preview/rooms-preview.html`을 브라우저로 여세요 (가짜 데이터). 시간은 한국 시간(UTC+9) 기준이고, 바꾸려면 `template.yaml`의 `TIMEZONE_OFFSET_HOURS`를 고칩니다.
+페이지 주소는 배포가 끝날 때 `room status page`로 출력됩니다. 시간은 한국 시간(UTC+9) 기준이고, 바꾸려면 `template.yaml`의 `TIMEZONE_OFFSET_HOURS`를 고칩니다.
 
 ## 아키텍처
 
@@ -109,7 +112,7 @@ Connectors 목록에 `meeting-room`이 생기면 바로 채팅에서 쓸 수 있
 오늘 내 예약 보여주고, 3시 회의는 취소해줘
 ```
 
-예약하면 [회의실 현황 페이지](#결과물-회의실-현황-페이지)에 2초 안에 반영됩니다.
+예약하면 [회의실 현황 페이지](#배포하면-생기는-것)에 2초 안에 반영됩니다.
 
 ## 인증 방식
 
@@ -159,7 +162,6 @@ Connectors 목록에 `meeting-room`이 생기면 바로 채팅에서 쓸 수 있
 template.yaml          CloudFormation (DynamoDB, Lambda, Cognito, AgentCore Gateway, CloudFront)
 src/tools/handler.py   MCP 도구 5개 (Gateway Lambda target)
 src/dashboard/         회의실 현황 페이지(rooms.html)와 API
-preview/               가짜 데이터로 현황 페이지 디자인만 보는 파일 (브라우저로 바로 열기)
 docs/                  아키텍처 다이어그램(.drawio, .png), 화면 스크린샷
 scripts/deploy.sh      배포 + mcp.json 생성
 scripts/mcp-json.sh    mcp.json 다시 만들기 (토큰 갱신)
